@@ -554,7 +554,7 @@ FilterConfig是一个接口，用于存储与特定Filter相关的上下文信�
 2. StandardContext.filterConfigs  
 StandardContext.filterConfigs是一个HashMap<String,ApplicationFilterConfig>对象，用于存储与当前web应用上下文相关的所有FilterConfig实例。  
 每当在web应用中定义一个新的Filter时，StandardContext.filterConfigs中就会增加一个新的键值对。
-![alt text](image.png)
+![image](https://github.com/user-attachments/assets/a07a76d3-a9e2-4faa-ae0e-b34bb9d6b4a7)
 3. FilterDef  
 FilterDef类用于存储与特定Filter相关的具体信息，作用和web.xml中的\<filter>一致。  
 Tomcat会根据FilterDef创建Filter实例，并为每个实例生成一个FilterConfig，FilterConfig包含了从FilterDef中获取的初始化参数和上下文信息。  
@@ -564,7 +564,7 @@ FilterDef中有3个必需信息：
     >Filter：实际的Filter对象实例，Tomcat在请求处理时调用它的方法。  
 4. StandardContext.filterDefs  
 StandardContext.filterDefs是一个HashMap<String,FilterDef>对象,用于存储与当前web应用上下文相关的所有FilterDef实例。
-![alt text](image-1.png)
+![image-1](https://github.com/user-attachments/assets/2ea5560a-06ed-48de-bb94-097c850861db)
 5. FilterMap
 FilterMap类用于管理和配置Filter，主要作用是定义Filter与其所应用的URL模式之间的映射关系，作用和web.xml中的\<filter-mapping>标签一致。  
 FilterMap中有3个必需信息：
