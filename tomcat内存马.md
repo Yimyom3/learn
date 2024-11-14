@@ -95,7 +95,7 @@ public class GetByContextClassLoader {
 ### 通过MBean获取
 
 ​Tomcat使用JMX MBean来实现自身的性能管理，因此可以通过jmxMBeanServer对象，在其field中一步一步找到StandardContext对象。
->适用范围:Tomcat6.0-9.0版本(7.0.10-9.0.96)  
+>适用范围:Tomcat6.0-9.0版本(6.0.10-9.0.96)  
 >**Tomcat10以后要求JDK9以上的版本，而Java9引入的模块系统导致一些内部api默认情况下不对外部模块(未命名模块)开放，并且不能通过反射获取其他模块的非public属性**
 
 ```java
@@ -427,7 +427,7 @@ JSP中内置request对象，可直接使用。
 在一个静态常量值为true时，org.apache.catalina.core.ApplicationFilterChain的lastServicedRequest和lastServicedResponse会将request对象和response对象存储进ThreadLocal对象中，通过反射修改该值再获取即可。  
 >适用范围:Tomcat6.0-9.0(6.0.9-9.0.96)  
 >**Tomcat10以后将静态常量值改成ApplicationFilterChain的对象字段，不再是静态字段**  
->**只能在所有的Filter之后获取，所以对shiro反序列这种漏洞无用**
+>**只能在所有的Filter之后获取，所以对shiro反序列这种Filter层的漏洞无用**
 
 ```java
 public class GetByThreadLocal {
@@ -893,7 +893,7 @@ StandardContext.servletMappings的值是service的名称，对应web.xml中的\<
     }
     ```
 
->tomcat6打不了servlet内存马，servlet能注册但是访问无法触发，原因未知。
+>**tomcat6打不了servlet内存马，servlet能注册但是访问无法触发，原因未知。**
 
 ## Listener型内存马
 
