@@ -14,7 +14,7 @@
 
 4. JSON.parse()  
     >JSON.parse方法用于将json字符串转换成一个JSONObject对象。  
-    >如果json字符串中有@type键值对，那么不再是转换成JSONObject对象，而是指定的Java类对象，并且会调用该类的无参构造函数和setter方法和满足条件的getter方法。
+    >如果json字符串中有@type键值对，那么不再是转换成JSONObject对象，而是指定的Java类对象，并且会调用该类的无参构造函数和对应json字符中字段的setter方法和满足条件的getter方法。
 
 5. JSON.parseObject()
     >JSON.parseObject方法用于将json字符串转换为JSONObject对象，无论json字符串中是否含有@type键值对。  
