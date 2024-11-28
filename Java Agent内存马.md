@@ -121,7 +121,7 @@ boolean removeTransformer(ClassFileTransformer transformer);
 Instrumentation类的retransformClasses()方法retransformClasses()方法的作用是手动请求使用转换器去转换指定的一组已加载类。  
 
 1. 对于没有加载的类，会使用ClassLoader.defineClass()定义它;
-2. 对于已经加载的类，如果canRetransform的值为true,那么会使用ClassLoader.redefineClasses()重新定义。
+2. 对于已经加载的类，如果addTransformer()的canRetransform的值为true,那么会使用ClassLoader.redefineClasses()重新定义。
 
 ```java
 boolean retransformClasses(Class<?>[] classes throws UnmodifiableClassException;;
@@ -136,7 +136,7 @@ byte[] transform(ClassLoader loader,String className,Class<?> classBeingRedefine
 ```
 
 1. loader:当前正在被加载的类的类加载器。
-2. className:表示当前正在被加载的类的全限定名。
+2. className:表示当前正在被加载的类的全限定名,以/分隔。
 3. classBeingRedefined:仅在重新定义类时有效，表示即将被重新定义的类。
 4. protectionDomain:表示当前正在被加载的类的保护域。
 5. classfileBuffer:包含当前正在被加载的类的原始字节码
@@ -250,7 +250,7 @@ transform()方法返回的结果将作为转换器的内容，
     package org.example;
 
     import java.util.Scanner;
-    import org.example.Test02;
+    import org.example.Test01;
 
     public class Test01 {
         public static void main(String[] args) {
