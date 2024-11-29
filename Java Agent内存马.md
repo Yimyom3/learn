@@ -73,9 +73,13 @@ agentmain是一种可以在目标JVM运行时进行动态插入的Agent，需要
     import com.sun.tools.attach.VirtualMachine;
 
     public static void main(String[] args) throws AttachNotSupportedException, AgentLoadException, AgentInitializationException {
-        VirtualMachine vm = VirtualMachine.attach(pid); //建立与目标JVM的连接，pid为目标JVM的进程pid
-        vm.loadAgent(jarPath); //将agentmain生成的jar包注入到目标JVM中，注入成功会执行agentmain方法
-        vm.detach(); //断开与目标JVM的连接
+        List<VirtualMachineDescriptor> list = VirtualMachine.list(); //获取当前系统上所有JVM信息。
+        for (VirtualMachineDescriptor vmd : list) {
+            System.out.println("进程ID：" + vmd.id() + "，进程名称：" + desc.displayName()); //获取jvm的进程pid和启动时的主类。
+            VirtualMachine vm = VirtualMachine.attach(pid); //建立与目标JVM的连接，pid为目标JVM的进程pid
+            vm.loadAgent(jarPath); //将agentmain生成的jar包注入到目标JVM中，注入成功会执行agentmain方法
+            vm.detach(); //断开与目标JVM的连接
+        }
     }
     ```
 
@@ -121,7 +125,8 @@ boolean removeTransformer(ClassFileTransformer transformer);
 Instrumentation类的retransformClasses()方法retransformClasses()方法的作用是手动请求使用转换器去转换指定的一组已加载类。  
 
 1. 对于没有加载的类，会使用ClassLoader.defineClass()定义它;
-2. 对于已经加载的类，如果addTransformer()的canRetransform的值为true,那么会使用ClassLoader.redefineClasses()重新定义。
+2. 对于已经加载的类，如果canRetransform的值为true,那么会使用ClassLoader.redefineClasses()重新定义。
+3. 想要重定义类，需要代理jdk版本和被代理jdk版本一致。
 
 ```java
 boolean retransformClasses(Class<?>[] classes throws UnmodifiableClassException;;
@@ -136,12 +141,12 @@ byte[] transform(ClassLoader loader,String className,Class<?> classBeingRedefine
 ```
 
 1. loader:当前正在被加载的类的类加载器。
-2. className:表示当前正在被加载的类的全限定名,以/分隔。
+2. className:表示当前正在被加载的类的全限定名。
 3. classBeingRedefined:仅在重新定义类时有效，表示即将被重新定义的类。
 4. protectionDomain:表示当前正在被加载的类的保护域。
 5. classfileBuffer:包含当前正在被加载的类的原始字节码
 
-transform()方法返回的结果将作为转换器的内容，
+transform()方法返回的结果将作为转换器的内容。
 
 ## 完整代码
 
@@ -216,49 +221,40 @@ transform()方法返回的结果将作为转换器的内容，
 
     ```
 
-4. 代理类
-
-    ```java
-    package com.demo.Main;
-
-    import java.io.IOException;
-    import java.util.Scanner;
-    import com.sun.tools.attach.AgentInitializationException;
-    import com.sun.tools.attach.AgentLoadException;
-    import com.sun.tools.attach.AttachNotSupportedException;
-    import com.sun.tools.attach.VirtualMachine;
-
-    public class Main {
-
-        public static void main(String[] args) throws IOException, AttachNotSupportedException, AgentLoadException, AgentInitializationException {
-            Scanner sc = new Scanner(System.in);
-            String pid = sc.nextLine();
-            System.out.println("pid: " + pid);
-            VirtualMachine vm = VirtualMachine.attach(pid);
-            System.out.println("attach success");
-            vm.loadAgent("agent.jar");
-            System.out.println("load agent success");
-            vm.detach();
-            System.out.println("detach success");
-        }
-    }
-    ```
-
-5. 被代理类
+4. 代理实现(注入当前进程)
 
     ```java
     package org.example;
 
-    import java.util.Scanner;
-    import org.example.Test01;
+    import java.lang.management.ManagementFactory;
+    import java.lang.management.RuntimeMXBean;
+    import com.sun.tools.attach.VirtualMachine;
 
     public class Test01 {
-        public static void main(String[] args) {
-            say();
-            Scanner sc = new Scanner(System.in);
-            sc.nextLine();
-            sc.close();
-            say();
+
+        public static void main(String[] args){
+            Test02.say();
+            loadAgent("agent.jar");
+            Test02.say();
+        }
+
+        public static void loadAgent(String agentPath){
+            try {
+                String pid = getCurrentPid();
+                System.out.println("pid ==> " + pid);
+                VirtualMachine vm = VirtualMachine.attach(pid);
+                System.out.println("attach success");
+                vm.loadAgent(agentPath,null);
+                System.out.println("load agent success");
+                vm.detach();
+                System.out.println("detach success");
+            }catch (Exception e) {
+            }
+        }
+
+        public static String getCurrentPid() {
+            RuntimeMXBean runtimeMXBean = ManagementFactory.getRuntimeMXBean();
+            return runtimeMXBean.getName().split("@")[0];
         }
     }
     ```
