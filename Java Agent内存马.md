@@ -268,3 +268,110 @@ transform()方法返回的结果将作为转换器的内容。
         }
     }
     ```
+
+## Agent内存马的实现
+
+agent内存马是通过agent技术去修改中间件中关键类的字节码，通过在方法中插入额外的webshell逻辑。  
+agent内存马分为有文件落地和无文件落地两种方式，无文件落地方式是对有文件落地的升级。
+
+### 有文件落地的内存马
+
+有文件落地的内存马的植入步骤分为:
+
+1. 编写agent.jar文件来修改目标类，添加webshell逻辑。
+2. 将agent.jar放置到目标系统的磁盘上。
+3. 通过selfattach向目标自身jvm进程注入agent.jar，植入webshell。
+
+### 文件落地的缺点
+
+1. 必须有一个agent.jar文件在目标机器的磁盘上来供目标JVM加载。
+2. 因为agent注入需要依赖tools.jar，虽然tools.jar是JDK内置的，但JVM默认是不加载的，因此需要动态加载；  
+   如果agent.jar中使用javassist动态修改字节码，则还需要确保目标环境存在该依赖，不存在的话也需要动态加载。  
+3. 虽然有方法可以在内存中直接加载jar，但是由于jar的体积都不小，即使压缩后的字节码也非常大，如果写在代码中，那么会导致代码体积过大，当通过反序列化植入agent内存马时，会导致序列化后的字节码太大。
+   >内存加载jar的方法:
+
+   ```java
+    import java.io.*;
+    import java.lang.reflect.Field;
+    import java.lang.reflect.Method;
+    import java.net.*;
+    import java.util.ArrayList;
+    import java.util.List;
+    import java.util.Map;
+    import java.util.concurrent.ConcurrentHashMap;
+
+    /**
+    * 自定义URLStreamHandlerFactory，注册自定义协议，实现jar包在内存中动态注入
+    */
+    public class ResourceLoader {
+
+        private static final Map<String, byte[]> map = new ConcurrentHashMap<>();
+        private static final String customProtocol = "customProtocol";
+        private static boolean flag = false;
+
+        public static void init(String jarName, byte[] jarBytes) throws Exception {
+            if (!flag) {
+                registerFactory();
+            }
+            map.put(jarName, jarBytes);
+            Method method = URLClassLoader.class.getDeclaredMethod("addURL", URL.class);  // 将JAR文件动态添加到系统类加载器的类路径
+            method.setAccessible(true);
+            method.invoke(ClassLoader.getSystemClassLoader(), new URL(customProtocol + ":" + jarName));
+        }
+
+        private static void registerFactory() {
+            Object tomcatURLStreamHandlerFactory;
+            try {
+                //tomcat已经存在了URLStreamHandlerFactory对象，向这个对象添加自定义的URLStreamHandlerFactory即可。
+                Class clazz = Class.forName("org.apache.catalina.webresources.TomcatURLStreamHandlerFactory");
+                Method method = clazz.getMethod("getInstance");
+                tomcatURLStreamHandlerFactory = method.invoke(null);
+            } catch (Exception e) {
+                tomcatURLStreamHandlerFactory = null;
+            }
+            try {
+                if (tomcatURLStreamHandlerFactory != null) {
+                    Method addUserFactory = tomcatURLStreamHandlerFactory.getClass().getMethod("addUserFactory", URLStreamHandlerFactory.class);
+                    addUserFactory.invoke(tomcatURLStreamHandlerFactory, customProtocolFactory());
+                    flag = true;
+                } else {
+                    URL.setURLStreamHandlerFactory(customProtocolFactory());
+                    flag = true;
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+
+        private static URLStreamHandlerFactory customProtocolFactory() {
+            return protocol -> {
+                if (customProtocol.equalsIgnoreCase(protocol)) {
+                    return new URLStreamHandler() {
+                        @Override
+                        protected URLConnection openConnection(URL url) {
+                            String key = url.toString().split(":")[1];
+                            return new URLConnection(url) {
+                                public void connect() {
+                                }
+
+                                public InputStream getInputStream() {
+                                    return new ByteArrayInputStream(map.get(key));
+                                }
+                            };
+                        }
+                    };
+                }
+                return null;
+            };
+        }
+
+    }
+   ```
+
+## 参考链接
+
+<https://www.cnblogs.com/silyvin/articles/12178528.html>  
+<https://xz.aliyun.com/t/10075>  
+<https://xz.aliyun.com/t/11640>  
+<https://github.com/BeichenDream/Kcon2021Code>  
+<https://weixin.sogou.com/link?url=dn9a_-gY295K0Rci_xozVXfdMkSQTLW6cwJThYulHEtVjXrGTiVgS5FLi4EgWb-aa0XM2wzYrWzSJwwyhsRcI1qXa8Fplpd9bPXFm10HYAweWxrFyBnRRQzL7mc0tsc5kRWLLvkiC8LNR4rtJg0tWTVB3UIhcU5tUxE4IqeJX4isHqTMF2mdxNjemlnBPQY8krjTDkObOAX_MXE2NOT_gUhR_Xh3p2NkoqfUnK3u1GT8Qqkit9FA340oNcsYZVoRXpWHLaTjzSsYJSSFPgfogQ..&type=2&query=%E5%88%86%E6%9E%90%E5%93%A5%E6%96%AF%E6%8B%89%E5%86%85%E5%AD%98%E5%8A%A0%E8%BD%BDJar%E6%8A%80%E6%9C%AF&token=D8152AFD49CB511B3F3968DBF1E0F9A74024424D67597D4D&k=34&h=L>
