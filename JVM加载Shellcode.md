@@ -76,7 +76,7 @@ openProcess方法的实现主要分为3个步骤:
 enqueue方法有5个参数，第1个是目标进程的句柄，第2个是函数指针，剩下的参数是函数指针的参数，不重要。  
 enqueue方法的主要实现分为3个步骤:
 
-1. 将enqueue方法第2个参数后的参数组装成一个DataBlock结构体
+1. 将enqueue方法后3个参数封装进一个DataBlock结构体
 
    ```cpp
    typedef struct {
@@ -91,7 +91,7 @@ enqueue方法的主要实现分为3个步骤:
    } DataBlock;
    ```
 
-2. 向第1个参数的目标进程申请可读可写的内存空间，将组装的DataBlock结构体数据写入
+2. 向第1个参数的目标进程申请可读可写的内存空间，将封装的DataBlock结构体数据写入
 
    ```cpp
    DataBlock data;
@@ -100,7 +100,7 @@ enqueue方法的主要实现分为3个步骤:
    WriteProcessMemory( hProcess, (LPVOID)pData, (LPCVOID)&data, (SIZE_T)sizeof(DataBlock), NULL );
    ```
 
-3. 向目标进程申请可读可写可执行的内存空间，将第2个参数的函数指针写入，并通过CreateRemoteThread创建远程线程来运行该函数指针,参数是DataBlock结构体。
+3. 向目标进程申请可读可写可执行的内存空间，将第2个参数的函数指针写入，并通过CreateRemoteThread创建远程线程来运行该函数指针,参数是封装的DataBlock结构体。
 
    ```cpp
    pCode = (PDWORD) VirtualAllocEx( hProcess, 0, stubLen, MEM_COMMIT, PAGE_EXECUTE_READWRITE );
