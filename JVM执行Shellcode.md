@@ -100,13 +100,15 @@ enqueue方法的主要实现分为4个步骤:
    WriteProcessMemory( hProcess, (LPVOID)pData, (LPCVOID)&data, (SIZE_T)sizeof(DataBlock), NULL );
    ```
 
-3. 向目标进程申请可读可写可执行的内存空间，将第2个参数的函数指针写入，并通过CreateRemoteThread创建远程线程来运行该函数指针。
+3. 向目标进程申请可读可写可执行的内存空间，将第2个参数的函数指针写入，并通过CreateRemoteThread创建远程线程来运行该函数指针,参数是DataBlock结构体。
 
    ```cpp
    pCode = (PDWORD) VirtualAllocEx( hProcess, 0, stubLen, MEM_COMMIT, PAGE_EXECUTE_READWRITE );
    WriteProcessMemory( hProcess, (LPVOID)pCode, (LPCVOID)stubCode, (SIZE_T)stubLen, NULL );
    hhThread = CreateRemoteThread( hProcess,  NULL,  0,  (LPTHREAD_START_ROUTINE) pCode,  pData,  0,NULL );
    ```
+   
+>执行shellcode并不需要参数，所以DataBlock结构体无关紧要，因此enqueue方法后3个参数直接为null即可。
 
 ## Java层加载Shellcode
 
@@ -123,7 +125,7 @@ public class WindowsVirtualMachine {
 
     static native long openProcess(int pid) throws IOException;
 
-    static native void enqueue(long hProcess, byte[] stub, String cmd, String pipename, Object ... args) throws IOException;throws IOException;
+    static native void enqueue(long hProcess, byte[] stub, String cmd, String pipename, Object ... args) throws IOException;
     
     static {
         System.loadLibrary("attach");
