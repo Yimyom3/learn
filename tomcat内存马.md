@@ -5,8 +5,7 @@
 1. 获取Context对象
     >Tomcat: StandardContext对象  
     >Weblogic: ServletContext对象  
-    >SpringMVC: WebApplicationContext对象  
-    >SpringBoot: WebApplicationContext对象
+    >Spring: WebApplicationContext对象  
 2. 创建创建servlet、filter或controller等恶意对象
 3. 使用各类context对象的各种方法，向中间件或框架动态添加servlet、filter或controller等恶意对象，完成内存马的注入
 
