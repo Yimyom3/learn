@@ -94,7 +94,7 @@ public class GetByContextClassLoader {
 ### 通过MBean获取
 
 ​Tomcat使用JMX MBean来实现自身的性能管理，因此可以通过jmxMBeanServer对象，在其field中一步一步找到StandardContext对象。
->适用范围:Tomcat6.0-last 
+>适用范围:Tomcat6.0-last  
 >**Tomcat10以后要求JDK9以上的版本，而Java9引入的模块系统导致一些内部api默认情况下不对外部模块(未命名模块)开放，需要额外绕过模块限制**
 
 ```java
