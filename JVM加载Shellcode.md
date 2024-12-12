@@ -114,6 +114,11 @@ enqueue方法的主要实现分为3个步骤:
 
 WindowsVirtualMachine类的openProcess方法和enqueue方法的参数都是在Java层面传入的，因此可以通过这两个方法可以实现在Java层面完成shellcode的加载。  
 WindowsVirtualMachine类位于tools.jar中，而tools.jar默认是不被JVM加载的，但是JNI的Native函数在调用的时候只检测发起调用的类限定名，并不检测发起调用类的ClassLoader，因此可以自定义一个WindowsVirtualMachine类来加载attach.dll，然后加载到JVM中，再调用这个自定义的WindowsVirtualMachine类来调用openProcess方法和enqueue方法。
+获取Java进程位数:
+
+```java
+System.getProperty("sun.arch.data.model");
+```
 
 ```java
 //自定义WindowsVirtualMachine类
