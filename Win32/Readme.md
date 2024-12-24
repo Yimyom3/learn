@@ -7,4 +7,4 @@
 - [ ] dll劫持
 - [ ] 反射式dll注入
 - [ ] 令牌弱化
-- [ ] 手写shellcode
+- [x] 手写shellcode
