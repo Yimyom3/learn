@@ -1,7 +1,7 @@
 # Win32免杀基础学习
 
 - [x] 远程线程注入
-- [x] inline hook(32位)
+- [x] inline hook
 - [x] 令牌特权提升
 - [x] veh动态加载
 - [x] dll劫持
