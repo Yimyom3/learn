@@ -28,11 +28,11 @@ BOOL PrivilegeDebug() {
     TOKEN_PRIVILEGES tp, tpPrevious;
     DWORD retLength;
 
-    //���Ի�ȡ��ǰ�̵߳�����
+    //尝试获取当前线程的令牌
     if (!OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, FALSE, &hToken)) {
         DWORD code = GetLastError();
         if (code == ERROR_NO_TOKEN) {
-            // ����߳�û�����ƣ���򿪵�ǰ��������
+            // 如果线程没有令牌，则打开当前进程令牌
             if (ImpersonateSelf(SecurityImpersonation)) {
                 if (!OpenThreadToken(GetCurrentThread(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, FALSE, &hToken)) {
                     return flag;
@@ -50,28 +50,28 @@ BOOL PrivilegeDebug() {
     }
 
     /*
-    ��ȡdebug��Ȩ�ı�ʶ����debug��Ȩ��һ���������Ȩ����Ҫ����ԱȨ�޲��ܻ�ȡ����������ִ�����²�����
-     1. ���ӵ��������̡�
-     2. �����������̡�
-     3. ��ȡ��д���������̵��ڴ档
-     4. �����������̵����ȼ���
-     5. ��ֹ�������̡�
+    获取debug特权的标识符，debug特权是一个特殊的特权，需要管理员权限才能获取，允许进程执行以下操作：
+     1. 附加到其他进程。
+     2. 调试其他进程。
+     3. 读取或写入其他进程的内存。
+     4. 更改其他进程的优先级。
+     5. 终止其他进程。
     */
     if (!LookupPrivilegeValue(NULL, SE_DEBUG_NAME, &lUid)) {
         cout << "find debug privilege fail" << endl;
         return flag;
     }
 
-    //��ʼ��������Ȩ�ṹ��
+    //初始化令牌特权结构体
     ZeroMemory(&tp, sizeof(tp));
-    tp.PrivilegeCount = 1; //������������Ȩ������
-    tp.Privileges[0].Luid = lUid; //������ȨΪdebug
-    tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED; //������ȨΪ����״̬
+    tp.PrivilegeCount = 1; //设置令牌中特权的数量
+    tp.Privileges[0].Luid = lUid; //设置特权为debug
+    tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED; //设置特权为启用状态
 
-    //�����߳����Ƶ���ȨΪdebug������tpPrevious����ԭ������Ȩ
+    //调整线程令牌的特权为debug，并用tpPrevious保存原来的特权
     if (AdjustTokenPrivileges(hToken, FALSE, &tp, sizeof(TOKEN_PRIVILEGES), &tpPrevious, &retLength)) {
         DWORD code = GetLastError();
-        //�߳����Ƶ�����Ȩ�ɹ�
+        //线程令牌调整特权成功
         if (code == ERROR_SUCCESS) {
             cout << "debug privilege enable successfully!" << endl;
             flag = TRUE;
@@ -90,10 +90,10 @@ BOOL PrivilegeDebug() {
         return flag;
     }
 
-    ////�ָ��߳�����ԭ�ȵ���Ȩ
+    ////恢复线程令牌原先的特权
     //if (AdjustTokenPrivileges(hToken, FALSE, &tpPrevious, retLength, NULL, NULL)) {
     //    DWORD code = GetLastError();
-    //    //�߳�������Ȩ�ָ��ɹ�
+    //    //线程令牌特权恢复成功
     //    if (code == ERROR_SUCCESS) {
     //        cout << "Token privileges restored successfully!" << endl;
     //    }
@@ -106,17 +106,17 @@ BOOL PrivilegeDebug() {
 }
 
 BOOL ChangeFunc(LPVOID funcAddress, UCHAR buf[], SIZE_T size) {
-    //��Щ����x86�ϵ��÷�������ջ��WINAPI�����ĺ����Ǳ����÷�������ջ��
-    //unsigned char buf[] = "\xb8\x20\xff\xff\xff\xc3"; //int����ֵ�޸�Ϊ2024��ָ��
-    //unsigned char buf[] = "\xb0\x40\xc3"; //bool����ֵ�޸�Ϊfalse��ָ��
-    //unsigned char buf[] = "\xc3"; //ֱ�ӽ���������ָ��
-    //unsigned char buf[] = "\xb8\00\00\00\00\xc3"; //����null��ָ��
-    //unsigned char buf[] = "\xe9\00\00\00\00"; //��������ת��Ŀ�ĵ�ַ����4���ֽ���ƫ�Ƶ�ַ��ƫ�Ƶ�ַ = Ŀ�ĵ�ַ - (eip+5)��jmpָ��ռ5���ֽڣ�����+5
+    //这些都是x86上调用方清理堆栈，WINAPI声明的函数是被调用方清理堆栈。
+    //unsigned char buf[] = "\xb8\x20\xff\xff\xff\xc3"; //int返回值修改为2024的指令
+    //unsigned char buf[] = "\xb0\x40\xc3"; //bool返回值修改为false的指令
+    //unsigned char buf[] = "\xc3"; //直接结束函数的指令
+    //unsigned char buf[] = "\xb8\00\00\00\00\xc3"; //返回null的指令
+    //unsigned char buf[] = "\xe9\00\00\00\00"; //无条件跳转到目的地址，后4个字节是偏移地址，偏移地址 = 目的地址 - (eip+5)，jmp指令占5个字节，所以+5
     /*
-    �ܽ�: ��mov��ָ����\xb8ʱ����Ҫ�޸�����eax�Ĵ�����ֵ
-          ��mov��ָ����\xb0ʱ��ֻ��Ҫ�޸�al��ֵ
-          ����������ֵ����1���ֽڵ�ʱ�򣬻�ȡ����eax�Ĵ�����ֵ��Ϊ���
-          ����������ֵֻ��1���ֽڵ�ʱ��ֻ��ȡal�е�ֵ��Ϊ�����eax�е������ֽڶԺ������ؽ��û��Ӱ��
+    总结: 当mov的指令是\xb8时，需要修改整个eax寄存器的值
+          当mov的指令是\xb0时，只需要修改al的值
+          当函数返回值超过1个字节的时候，会取整个eax寄存器的值作为结果
+          当函数返回值只有1个字节的时候，只会取al中的值作为结果，eax中的其他字节对函数返回结果没有影响
     */
 
     DWORD old;
@@ -168,7 +168,7 @@ BOOL CheckPrivilege()
 
 BOOL GetSystemProcess(DWORD pid) {
     if (!CheckPrivilege()) {
-        cout << "���Թ���ԱȨ�����г���!" << endl;
+        cout << "请以管理员权限运行程序!" << endl;
         return FALSE;
     }
     HANDLE hProcess = OpenProcess(PROCESS_CREATE_PROCESS, FALSE, pid);
@@ -200,9 +200,9 @@ BOOL GetSystemProcess(DWORD pid) {
                 }
                 return state;
             }
-            return state;
+            return FALSE;
         }
-        return state;
+        return FALSE;
     }
     return state;
 }
