@@ -7,9 +7,9 @@ public RunCalc
 KernelHandle proc
 	mov rax, gs:[60h] ;64位gs寄存器存储TEB结构体的地址，TEB + 0x60 = PEB结构体的地址
 	mov rax, [rax + 18h] ;PEB + 0x18 = PEB_LDR_DATA结构体的地址
-	mov rax, [rax + 10h] ; PEB_LDR_DATA + 0x10 = InLoadOrderModuleList(Reserved2[1])的Flink字段, Flink字段指向LDR_DATA_TABLE_ENTRY结构体
-	mov rax, [rax] ;跳过第一个链表(第一个是程序本身)，获取下一个链表的Flink字段
-	mov rax, [rax] ;跳过第二个链表(第二个是ntdll.dll)，获取下一个链表的Flink字段
+	mov rax, [rax + 10h] ; PEB_LDR_DATA + 0x10 = InLoadOrderModuleList(Reserved2[1])的Flink字段, Flink字段指向下一个LDR_DATA_TABLE_ENTRY结构体的InLoadOrderModuleList成员(Reserved1[0],也就是LDR_DATA_TABLE_ENTRY结构体的初始地址)
+	mov rax, [rax] ;跳过第一个LDR_DATA_TABLE_ENTRY结构体(第一个是程序本身)，获取下一个LDR_DATA_TABLE_ENTRY结构体的InLoadOrderModuleList成员
+	mov rax, [rax] ;跳过第二个LDR_DATA_TABLE_ENTRY结构体(第二个是ntdll.dll)，获取下一个LDR_DATA_TABLE_ENTRY结构体的InLoadOrderModuleList成员
 	mov rax, [rax + 30h] ;LDR_DATA_TABLE_ENTRY + 0x30 = Kernel32.dll的地址
 	ret
 KernelHandle endp
