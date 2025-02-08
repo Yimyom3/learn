@@ -6,7 +6,7 @@
 - [x] veh动态加载
 - [x] dll劫持
 - [x] syscall调用
-- [ ] 反射式dll注入
+- [x] 反射式dll注入
 - [ ] 令牌弱化
 - [x] 手写shellcode
 - [ ] 编写一个内核提权漏洞的POC
