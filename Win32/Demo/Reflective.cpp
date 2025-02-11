@@ -161,56 +161,56 @@ BOOL ReflectiveLoader() {
 		2.解析PE文件，获取关键信息
 	*/
 	LPVOID PEAddress = GetPEAddress(); //PE基址
-	LPVOID NTHeaders = ((BYTE*)PEAddress + *(PLONG)((BYTE*)PEAddress + 0x3C)); //NT头
-	LPVOID NTOptionHeader = ((BYTE*)NTHeaders + 0x18); //NT拓展头
-	DWORD AddressOfEntryPoint = *(PWORD)((BYTE*)NTOptionHeader + 0x10); //程序入口地址RVA
-	ULONG64 AddressOfEntryPointOffset = (ULONG64)((BYTE*)NTOptionHeader + 0x10) - (ULONG64)PEAddress; //程序入口地址偏移量
-	ULONG64 ImageBaseOffset = (ULONG64)((BYTE*)NTOptionHeader + 0x18) - (ULONG64)PEAddress; //ImageBase的偏移量
-	ULONG64 ImageBase = *(PULONG64)((BYTE*)NTOptionHeader + 0x18); //PE中默认映象基址
-	DWORD SectionAlignment = *(PWORD)((BYTE*)NTOptionHeader + 0x20); //内存对齐大小
-	DWORD FileAlignment = *(PWORD)((BYTE*)NTOptionHeader + 0x24); //磁盘对齐大小
-	DWORD SizeOfImage = *(PWORD)((BYTE*)NTOptionHeader + 0x34); //映象文件总大小
-	DWORD SizeOfHeaders = *(PWORD)((BYTE*)NTOptionHeader + 0x38); //PE头总大小
-	WORD NumberOfSections = *(PWORD)((BYTE*)NTHeaders + 0x10); //节的数量
-	LPVOID PImageSectionHeader = ((BYTE*)NTOptionHeader + 0xf0); //节表指针
+	LPVOID NTHeaders = ((BYTE*)PEAddress + *(PLONG)((BYTE*)PEAddress + offsetof(IMAGE_DOS_HEADER, e_lfanew))); //NT头
+	LPVOID NTOptionHeader = ((BYTE*)NTHeaders + offsetof(IMAGE_NT_HEADERS, OptionalHeader)); //NT拓展头
+	DWORD addressOfEntryPoint = *(PDWORD)((BYTE*)NTOptionHeader + offsetof(IMAGE_OPTIONAL_HEADER64, AddressOfEntryPoint)); //程序入口地址RVA
+	ULONG64 addressOfEntryPointOffset = (ULONG64)((BYTE*)NTOptionHeader + offsetof(IMAGE_OPTIONAL_HEADER64, AddressOfEntryPoint)) - (ULONG64)PEAddress; //程序入口地址偏移量
+	ULONG64 ImageBaseOffset = (ULONG64)((BYTE*)NTOptionHeader + offsetof(IMAGE_OPTIONAL_HEADER64, ImageBase)) - (ULONG64)PEAddress; //ImageBase的偏移量
+	ULONG64 imageBase = *(PULONG64)((BYTE*)NTOptionHeader + offsetof(IMAGE_OPTIONAL_HEADER64, ImageBase)); //PE中默认映象基址
+	DWORD sectionAlignment = *(PDWORD)((BYTE*)NTOptionHeader + offsetof(IMAGE_OPTIONAL_HEADER64, SectionAlignment)); //内存对齐大小
+	DWORD fileAlignment = *(PDWORD)((BYTE*)NTOptionHeader + offsetof(IMAGE_OPTIONAL_HEADER64, FileAlignment)); //磁盘对齐大小
+	DWORD sizeOfImage = *(PDWORD)((BYTE*)NTOptionHeader + offsetof(IMAGE_OPTIONAL_HEADER64, SizeOfImage)); //映象文件总大小
+	DWORD sizeOfHeaders = *(PDWORD)((BYTE*)NTOptionHeader + offsetof(IMAGE_OPTIONAL_HEADER64, SizeOfHeaders)); //PE头总大小
+	WORD NumberOfSections = *(PWORD)((BYTE*)NTHeaders + 6); //节的数量
+	LPVOID PImageSectionHeader = ((BYTE*)NTOptionHeader + sizeof(IMAGE_OPTIONAL_HEADER64)); //节表指针
 
 	/*
 		3.申请内存空间，把PE文件内容复制
 	*/
-	LPVOID DLLHandle = _VirtualAlloc(NULL, SizeOfImage, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE); //申请内存得到DLL句柄
+	LPVOID DLLHandle = _VirtualAlloc(NULL, sizeOfImage, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE); //申请内存得到DLL句柄
 	if (DLLHandle == NULL) {
 		return FALSE;
 	}
-	for (DWORD i = 0; i < SizeOfHeaders; i++) {
+	for (DWORD i = 0; i < sizeOfHeaders; i++) {
 		*((BYTE*)DLLHandle + i) = *((BYTE*)PEAddress + i); //先把PE头复制过去
 	}
 	*(PULONG64)((BYTE*)DLLHandle + ImageBaseOffset) = (ULONG64)DLLHandle; //修正映象基址
 	for (WORD i = 0; i < NumberOfSections; i++) {  //再复制每个节
-		DWORD VirtualSize = *(PDWORD)((BYTE*)PImageSectionHeader + i * 0x28 + 0xC); //内存中节的RVA
-		DWORD PointerToRawData = *(PDWORD)((BYTE*)PImageSectionHeader + i * 0x28 + 0xC); //磁盘中节的RVA
-		DWORD SizeOfRawData = *(PDWORD)((BYTE*)PImageSectionHeader + i * 0x28 + 0x14); //节在磁盘上的大小
-		for (DWORD j = 0; j < SizeOfRawData; j++) {
-			*((BYTE*)DLLHandle + VirtualSize + j) = *((BYTE*)PEAddress + PointerToRawData + j); //复制节的内容
+		DWORD virtualAddress = *(PDWORD)((BYTE*)PImageSectionHeader + i * sizeof(IMAGE_SECTION_HEADER) + offsetof(IMAGE_SECTION_HEADER, VirtualAddress)); //内存中节的RVA
+		DWORD sizeOfRawData = *(PDWORD)((BYTE*)PImageSectionHeader + i * sizeof(IMAGE_SECTION_HEADER) + offsetof(IMAGE_SECTION_HEADER, SizeOfRawData)); //节在磁盘上的大小
+		DWORD pointerToRawData = *(PDWORD)((BYTE*)PImageSectionHeader + i * sizeof(IMAGE_SECTION_HEADER) + offsetof(IMAGE_SECTION_HEADER, PointerToRawData)); //磁盘中节的RVA
+		for (DWORD j = 0; j < sizeOfRawData; j++) {
+			*((BYTE*)DLLHandle + virtualAddress + j) = *((BYTE*)PEAddress + pointerToRawData + j); //复制节的内容
 		}
 	}
 
 	/*
 		4.修复导入表(IAT)
 	*/
-	LPVOID PImageImportDescriptor = ((BYTE*)NTOptionHeader + 0x78); //导入目录表指针
+	LPVOID PImageImportDescriptor = ((BYTE*)NTOptionHeader + offsetof(IMAGE_OPTIONAL_HEADER64, DataDirectory[1])); //导入目录表
 	DWORD ImageImportDescriptorVirtualAddress = *(PDWORD)PImageImportDescriptor; //导入表RVA
 	DWORD ImageImportDescriptorSize = *((PDWORD)PImageImportDescriptor + 1); //导入表大小
-	SIZE_T DLLcount = (ImageImportDescriptorSize / sizeof(IMAGE_DATA_DIRECTORY)) - 1; //需要导入DLL的数量
+	DWORD DLLcount = (ImageImportDescriptorSize / sizeof(IMAGE_IMPORT_DESCRIPTOR)) - 1; //需要导入DLL的数量
 	LPVOID PImageImport = ((BYTE*)DLLHandle + ImageImportDescriptorVirtualAddress); //实际导入表地址
 	for (DWORD i = 0; i < DLLcount; i++) {
-		DWORD NameRVA = *(PDWORD)((BYTE*)PImageImport + i * 0x14 + 0xC); //DLL名称的RVA
-		LPSTR DLLName = ((CHAR*)DLLHandle + NameRVA); //获取DLL名称
-		HMODULE DLLHmodule = _LoadLibraryA(DLLName);//加载DLL
+		DWORD NameRVA = *(PDWORD)((BYTE*)PImageImport + i * sizeof(IMAGE_IMPORT_DESCRIPTOR) + offsetof(IMAGE_IMPORT_DESCRIPTOR, Name)); //函数名称的RVA
+		LPSTR DLLName = (LPSTR)((BYTE*)DLLHandle + NameRVA); //获取DLL名称
+		HMODULE DLLHmodule = _LoadLibraryA(DLLName);//加载DLL 函数指针地址对的，但是却内存访问异常
 		if (DLLHmodule == NULL) {
-			return FALSE;
+			return 9;
 		}
-		DWORD FirstThunk = *(PDWORD)((BYTE*)PImageImport + i * 0x14 + 0x10); //获取导入函数表(IAT)RVA
-		DWORD OriginalFirstThunk = *(PDWORD)((BYTE*)PImageImport + i * 0x14); //获取INT表RVA
+		DWORD FirstThunk = *(PDWORD)((BYTE*)PImageImport + i * sizeof(IMAGE_IMPORT_DESCRIPTOR) + offsetof(IMAGE_IMPORT_DESCRIPTOR, FirstThunk)); //获取导入函数表(IAT)RVA
+		DWORD OriginalFirstThunk = *(PDWORD)((BYTE*)PImageImport + i * sizeof(IMAGE_IMPORT_DESCRIPTOR) + offsetof(IMAGE_IMPORT_DESCRIPTOR, OriginalFirstThunk)); //获取INT表RVA
 		LPVOID PIAT = ((BYTE*)DLLHandle + FirstThunk); //IAT表的地址
 		LPVOID PINT = ((BYTE*)DLLHandle + OriginalFirstThunk); //INT表的地址
 		for (DWORD j = 0;;j++) {
@@ -221,7 +221,7 @@ BOOL ReflectiveLoader() {
 				WORD ordinal = *(PWORD)((PULONG64)PINT + j);
 				FARPROC funcAddress = __GetProcAddress(DLLHmodule,(LPCSTR)ordinal); //通过序号获取函数地址
 				if (funcAddress == NULL) {
-					return FALSE;
+					return 8;
 				}
 				*((PULONG64)PIAT + j) = (ULONG64)funcAddress; //修复IAT表的地址
 			}
@@ -231,12 +231,14 @@ BOOL ReflectiveLoader() {
 				LPCSTR funcName = (LPCSTR)((BYTE*)DLLHandle + ImageThunkRVA + 2); //函数名称 
 				FARPROC funcAddress = __GetProcAddress(DLLHmodule, funcName); //通过函数名称获取函数地址
 				if (funcAddress == NULL) {
-					return FALSE;
+					return 7;
 				}
 				*((PULONG64)PIAT + j) = (ULONG64)funcAddress; //修复IAT表的地址
 			}
 		}
 	}
+
+	return 100;
 
 	/*
 		5.修复重定位表
@@ -244,7 +246,7 @@ BOOL ReflectiveLoader() {
 	LPVOID PImageBaseRelocation = ((BYTE*)NTOptionHeader + 0x98); //重定位目录表指针
 	DWORD ImageBaseRelocationVirtualAddress = *(PDWORD)PImageBaseRelocation; //重定位表RVA
 	DWORD ImageBaseRelocationSize = *((PDWORD)PImageBaseRelocation + 1); //重定位表大小
-	ULONG64 Difference = (ULONG64)DLLHandle - ImageBase; //计算映象地址差值
+	ULONG64 Difference = (ULONG64)DLLHandle - imageBase; //计算映象地址差值
 	LPVOID RelocationAddress = ((BYTE*)DLLHandle + ImageBaseRelocationVirtualAddress);  //重定位表地址
 	DWORD UsedSize = 0; //已使用重定位表大小
 	do {
@@ -267,7 +269,7 @@ BOOL ReflectiveLoader() {
 		DWORD Characteristics = *(PDWORD)((BYTE*)PImageSectionHeader + i * 0x28 + 0x24); //节的内存属性
 		DWORD OldProtect = 0;
 		if (!_VirtualProtect(((BYTE*)DLLHandle + VirtualSize), SizeOfRawData, Characteristics,&OldProtect)) {
-			return FALSE;
+			return 6;
 		}
 	}
 
@@ -275,8 +277,8 @@ BOOL ReflectiveLoader() {
 		7.调用DLL入口函数
 	*/
 	if (!_NtFlushInstructionCache((HANDLE)-1, NULL, NULL)) { //刷新当前进程的指令缓存
-		return FALSE;
+		return 5;
 	}
-	PDllMain _DllMain = (PDllMain)((BYTE*)DLLHandle + AddressOfEntryPointOffset); //DLL入口函数指针
+	PDllMain _DllMain = (PDllMain)((BYTE*)DLLHandle + addressOfEntryPointOffset); //DLL入口函数指针
 	return _DllMain((HINSTANCE)DLLHandle,DLL_PROCESS_ATTACH,NULL); //转到DLL入口函数开始执行
 }
