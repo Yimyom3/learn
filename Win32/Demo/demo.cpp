@@ -1,125 +1,78 @@
-#include "util.h"
+#include "pch.h"
+#include <fstream>
+#pragma warning(disable : 4996)
 
-BOOL ParentProcessVerify(PWCHAR szName) {
-    BOOL state = FALSE;
-	DWORD currentPID = GetCurrentProcessId();
-    DWORD parentPID = 0;
-    HANDLE hprocessSnap;
-    PROCESSENTRY32  pe32;
-    pe32.dwSize = sizeof(PROCESSENTRY32);
-    hprocessSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (hprocessSnap == INVALID_HANDLE_VALUE) {
+int run(int offset) {
+    HANDLE hFile = CreateFileA("C:\\Users\\lw0122106\\Desktop\\code\\C++\\DemoDll\\x64\\Release\\DemoDll.dll", GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        return -1;
+    }
+    DWORD fileSize = GetFileSize(hFile, NULL);
+    HANDLE heap = HeapCreate(HEAP_CREATE_ENABLE_EXECUTE,0,0);
+    if (heap == NULL) {
+        CloseHandle(hFile);
+        return -1;
+    }
+    LPVOID buff = HeapAlloc(heap, HEAP_ZERO_MEMORY, fileSize);
+    if (buff == NULL) {
+        CloseHandle(hFile);
+        CloseHandle(heap);
+        return -1;
+    }
+    DWORD bytesRead;
+    if (ReadFile(hFile, buff, fileSize, &bytesRead, NULL)) {
+        cout << "PEAddress: " << buff << endl;
+        cout << "PE ReflectiveLoader Offset: " << hex << offset << endl;
+        BYTE* ReflectiveLoader = ((BYTE*)buff + offset);
+        BOOL state = ((BOOL(*)())ReflectiveLoader)();
+        CloseHandle(hFile);
+        CloseHandle(heap);
         return state;
     }
-    if (Process32First(hprocessSnap, &pe32))
-    {
-        do {
-            if (pe32.th32ProcessID == currentPID) {
-                parentPID = pe32.th32ParentProcessID;
-                break;
-            }
-        } while (Process32Next(hprocessSnap, &pe32));
-    }
-    if (Process32First(hprocessSnap, &pe32))
-    {
-        do {
-            if (pe32.th32ProcessID == parentPID) {
-                state = !_wcsicmp(szName, pe32.szExeFile);
-                break;
-            }
-        } while (Process32Next(hprocessSnap, &pe32));
-    }
-    CloseHandle(hprocessSnap);
-    return state;
+    CloseHandle(hFile);
+    CloseHandle(heap);
+    return -1;
 }
 
-BOOL GetProcessImageName(PWCHAR processName, PWCHAR exeName, PDWORD dwsize) {
-    BOOL state = FALSE;
-    DWORD pid = GetPid(processName);
-    HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, pid);
-    if (hProcess) {
-        state = QueryFullProcessImageNameW(hProcess, 0, exeName, dwsize);
-        CloseHandle(hProcess);
-        return state;
+DWORD GetOffset() {
+    HMODULE hModule = LoadLibraryA("C:\\Users\\lw0122106\\Desktop\\code\\C++\\DemoDll\\x64\\Release\\DemoDll.dll");
+    if (hModule) {
+        return (ULONG64)GetProcAddress(hModule, "ReflectiveLoader") - (ULONG64)hModule;
     }
-    return state;
+    return NULL;
 }
 
-BOOL CreatProcessByParent(PWCHAR parentName, PWCHAR filePath) {
-    WCHAR parentFilePath[MAX_PATH];
-    DWORD size = MAX_PATH;
-    DWORD parentPid = GetPid(parentName);
-    HANDLE hProcess = OpenProcess(PROCESS_CREATE_PROCESS, FALSE, parentPid);
-    PROCESS_INFORMATION newProcess = { 0 };
-    STARTUPINFOEXW startInfo = { 0 };
-    startInfo.StartupInfo.cb = sizeof(STARTUPINFOEX);
-    SIZE_T listSize = NULL;
-    BOOL state = FALSE;
-    if (hProcess) {
-        InitializeProcThreadAttributeList(NULL, 1, 0, &listSize);
-        if (GetLastError() == 122) {
-            startInfo.lpAttributeList = (LPPROC_THREAD_ATTRIBUTE_LIST)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, listSize);
-            if (startInfo.lpAttributeList) {
-                state = InitializeProcThreadAttributeList(startInfo.lpAttributeList, 1, 0, &listSize);
-                if (state) {
-                    state = UpdateProcThreadAttribute(startInfo.lpAttributeList, 0, PROC_THREAD_ATTRIBUTE_PARENT_PROCESS, &hProcess, sizeof(hProcess), NULL, NULL);
-                    if (state) {
-                        GetProcessImageName(parentName,parentFilePath,&size);
-                        PathRemoveFileSpecW(parentFilePath);
-                        state = CreateProcess(NULL, filePath, NULL, NULL, FALSE, EXTENDED_STARTUPINFO_PRESENT | CREATE_NEW_CONSOLE, NULL, parentFilePath, &startInfo.StartupInfo, &newProcess);
-                        if (state) {
-                            CloseHandle(newProcess.hProcess);
-                            CloseHandle(newProcess.hThread);
-                        }
-                        DeleteProcThreadAttributeList(startInfo.lpAttributeList);
-                        CloseHandle(hProcess);
-                        return state;
-                    }
-                    return state;
-                }
-                return state;
-            }
-            return state;
-        }
-        return state;
+bool SaveDllToFile() {
+    // 加载DLL并获取其基地址
+    HMODULE hModule = LoadLibraryA("C:\\Users\\lw0122106\\Desktop\\code\\C++\\DemoDll\\x64\\Release\\DemoDll.dll");
+    if (hModule == NULL) {
+        return false;
     }
-    return state;
+    // 获取模块信息
+    MODULEINFO moduleInfo;
+    if (!GetModuleInformation(GetCurrentProcess(), hModule, &moduleInfo, sizeof(MODULEINFO))) {
+        FreeLibrary(hModule);
+        return false;
+    }
+    // 打开输出文件
+    ofstream outFile("C:\\Users\\lw0122106\\Desktop\\code\\C++\\2.bin", ios::binary);
+    if (!outFile.is_open()) {
+        FreeLibrary(hModule);
+        return false;
+    }
+    // 将模块内容写入文件
+    outFile.write(reinterpret_cast<char*>(moduleInfo.lpBaseOfDll), moduleInfo.SizeOfImage);
+    // 关闭文件和释放模块
+    outFile.close();
+    FreeLibrary(hModule);
+    return true;
 }
 
-
-BOOL ChangeProcessInformation(PWCHAR parentName) {
-    WCHAR filePath[33];
-    DWORD Length = MAX_PATH;
-    BOOL state = FALSE;
-    state = GetProcessImageName(parentName, filePath, &Length);
-    if (state) {
-        USHORT MaximumLength = (Length + 1) * 2;
-        LPVOID TEB = NtCurrentTeb();
-        LPVOID PEB = (LPVOID) * (PDWORD64)((BYTE*)TEB + 0x60);
-        LPVOID ProcessParameters = (LPVOID) * (PDWORD64)((BYTE*)PEB + 0x20);
-        LPVOID PImagePathName = (LPVOID)((BYTE*)ProcessParameters + 0x60);
-        *(PUSHORT)((BYTE*)PImagePathName) = (USHORT)(Length * 2);
-        *(PUSHORT)((BYTE*)PImagePathName + 2) = MaximumLength;
-        *(PWSTR*)((BYTE*)PImagePathName + 8) = filePath;
-        LPVOID PCommandLine = (LPVOID)((BYTE*)ProcessParameters + 0x70);
-        *(PUSHORT)((BYTE*)PCommandLine) = (USHORT)(Length * 2);
-        *(PUSHORT)((BYTE*)PCommandLine + 2) = MaximumLength;
-        *(PWSTR*)((BYTE*)PCommandLine + 8) = filePath;
-        return state;
+int main() {
+    DWORD offset = GetOffset();
+    if (offset != NULL) {
+        offset -= 0xc00;
+        cout << run(offset) << endl;
     }
-    return state;
-}
-
-int main()
-{
-    WCHAR parentName[] = L"HONOR E.exe";
-    if (!ParentProcessVerify(parentName)) {
-        WCHAR filePath[MAX_PATH];
-        GetModuleFileNameW(NULL, filePath, MAX_PATH);
-        CreatProcessByParent(parentName, filePath);
-        exit(-1);
-    }
-    if (ChangeProcessInformation(parentName)) {
-        cout << "ok!" << endl;
-    }
+    //cout << hex << offset << endl;
 }
